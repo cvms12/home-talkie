@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#09090b">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>HomeTalkie | Instant Home Intercom</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PeerJS for Serverless P2P Audio & Data -->
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background-color: #09090b;
+            color: #f4f4f5;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: manipulation;
+        }
+        .ptt-button {
+            transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s ease;
+        }
+        .ptt-button:active, .ptt-active {
+            transform: scale(0.94);
+            box-shadow: 0 0 0 12px rgba(239, 68, 68, 0.25), 0 0 40px rgba(239, 68, 68, 0.5);
+        }
+        @keyframes pulse-ring {
+            0% { transform: scale(0.95); opacity: 0.7; }
+            100% { transform: scale(1.4); opacity: 0; }
+        }
+        .receiving-ring {
+            animation: pulse-ring 1.2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between bg-zinc-950">
+
+    <!-- Top Header -->
+    <header class="border-b border-zinc-800/80 bg-zinc-900/60 backdrop-blur-md px-4 py-3.5 sticky top-0 z-30">
+        <div class="max-w-md mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center">
+                    <i data-lucide="radio" class="w-5 h-5 text-amber-400"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base tracking-tight text-white leading-none">HomeTalkie</h1>
+                    <span class="text-[11px] text-zinc-400 font-mono" id="headerRoomBadge">Not Connected</span>
+                </div>
+            </div>
+
+            <button id="leaveBtn" onclick="leaveChannel()" class="hidden text-xs px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium transition">
+                Switch Room
+            </button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-grow flex items-center justify-center p-4">
+        <div class="w-full max-w-md">
+
+            <!-- Alert / Status Banner -->
+            <div id="statusBanner" class="hidden mb-4 p-3 rounded-xl border text-xs flex items-center gap-2.5">
+                <i id="statusBannerIcon" data-lucide="info" class="w-4 h-4 shrink-0"></i>
+                <span id="statusBannerText">Status message</span>
+            </div>
+
+            <!-- SCREEN 1: JOIN HOME CHANNEL -->
+            <section id="setupScreen" class="bg-zinc-900/80 border border-zinc-800 rounded-3xl p-6 shadow-2xl space-y-5">
+                <div class="text-center">
+                    <h2 class="text-xl font-bold text-white">Join Home Channel</h2>
+                    <p class="text-xs text-zinc-400 mt-1">Enter the same secret Home Code on all your family devices.</p>
+                </div>
+
+                <form id="joinForm" class="space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">This Device / Room Name</label>
+                        <input type="text" id="deviceNameInput" required maxlength="18" placeholder="e.g., Kitchen, Living Room, Dad..."
+                            class="w-full bg-zinc-950 border border-zinc-800 focus:border-amber-500 rounded-xl px-4 py-3 text-sm text-white placeholder-zinc-600 outline-none transition">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold uppercase tracking-wider text-zinc-400 mb-1.5">Secret Home Code (Channel)</label>
+                        <input type="text" id="homeCodeInput" required maxlength="20" placeholder="e.g., sharma-home-77"
+                            class="w-full bg-zinc-950 border border-zinc-800 focus:border-amber-500 rounded-xl px-4 py-3 text-sm font-mono text-amber-300 placeholder-zinc-600 outline-none transition">
+                    </div>
+
+                    <button type="submit" class="w-full py-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-sm shadow-lg shadow-amber-500/20 flex items-center justify-center gap-2 transition">
+                        <i data-lucide="power" class="w-4 h-4"></i>
+                        <span>Turn On Walkie-Talkie</span>
+                    </button>
+                </form>
+
+                <div class="p-3.5 rounded-2xl bg-zinc-950/80 border border-zinc-800/80 space-y-1.5">
+                    <div class="flex items-center gap-1.5 text-xs font-semibold text-amber-400">
+                        <i data-lucide="bell-ring" class="w-3.5 h-3.5"></i>
+                        <span>How Background Auto-Play Works</span>
+                    </div>
+                    <p class="text-[11px] text-zinc-400 leading-relaxed">
+                        Once turned on, this device keeps an <strong>Always-On Audio Listener</strong> active. Even if you switch to another app or turn off the screen, incoming voice messages play out loud immediately—just keep this browser tab open in the background.
+                    </p>
+                </div>
+            </section>
+
+            <!-- SCREEN 2: ACTIVE WALKIE-TALKIE INTERCOM -->
+            <section id="intercomScreen" class="hidden space-y-4">
+                
+                <!-- Connected Family Devices Pill Bar -->
+                <div class="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-4">
+                    <div class="flex items-center justify-between mb-2.5">
+                        <span class="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">Devices in Home</span>
+                        <span id="peerCountBadge" class="text-[11px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            1 Online (You)
+                        </span>
+                    </div>
+                    <div id="deviceList" class="flex flex-wrap gap-2">
+                        <!-- Device chips injected here -->
+                    </div>
+                </div>
+
+                <!-- Main Walkie-Talkie Transceiver Deck -->
+                <div class="bg-zinc-900/90 border border-zinc-800 rounded-3xl p-6 text-center shadow-2xl relative overflow-hidden">
+                    
+                    <!-- Live State Indicator -->
+                    <div id="transceiverStatus" class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-950 border border-zinc-800 text-xs font-medium text-zinc-300 mb-6">
+                        <span id="statusDot" class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                        <span id="statusLabel">Standby • Listening for voice</span>
+                    </div>
+
+                    <!-- Big Push-To-Talk (PTT) Button -->
+                    <div class="relative w-44 h-44 mx-auto my-2 flex items-center justify-center">
+                        <div id="receivingPulse" class="hidden absolute inset-0 rounded-full bg-emerald-500/30 receiving-ring"></div>
+                        
+                        <button id="pttBtn"
+                            onmousedown="startTalking(event)"
+                            onmouseup="stopTalking(event)"
+                            onmouseleave="stopTalking(event)"
+                            ontouchstart="startTalking(event)"
+                            ontouchend="stopTalking(event)"
+                            ontouchcancel="stopTalking(event)"
+                            class="ptt-button relative z-10 w-40 h-40 rounded-full bg-gradient-to-b from-zinc-800 to-zinc-900 border-4 border-zinc-700 flex flex-col items-center justify-center gap-2 shadow-2xl cursor-pointer focus:outline-none">
+                            <i id="pttIcon" data-lucide="mic" class="w-10 h-10 text-amber-400"></i>
+                            <span id="pttText" class="text-xs font-extrabold uppercase tracking-wider text-white">Hold to Talk</span>
+                        </button>
+                    </div>
+
+                    <p class="text-[11px] text-zinc-500 mt-5">
+                        Hold button (or hold <kbd class="px-1.5 py-0.5 bg-zinc-800 rounded text-zinc-300 font-mono">Spacebar</kbd>) to broadcast live to all devices
+                    </p>
+                </div>
+
+                <!-- Recent Voice Log + Replay Last Message -->
+                <div class="bg-zinc-900/80 border border-zinc-800 rounded-2xl p-4 flex items-center justify-between">
+                    <div class="flex items-center gap-3 overflow-hidden">
+                        <div class="w-9 h-9 rounded-xl bg-zinc-800 flex items-center justify-center shrink-0">
+                            <i data-lucide="volume-2" class="w-4 h-4 text-zinc-400"></i>
+                        </div>
+                        <div class="truncate">
+                            <p class="text-xs font-semibold text-zinc-200 truncate" id="lastMsgSender">No messages yet</p>
+                            <p class="text-[11px] text-zinc-500" id="lastMsgTime">Ready to receive</p>
+                        </div>
+                    </div>
+                    <button id="replayBtn" onclick="replayLastAudio()" disabled class="px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-medium text-white flex items-center gap-1.5 transition shrink-0">
+                        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                        <span>Replay</span>
+                    </button>
+                </div>
+
+            </section>
+        </div>
+    </main>
+
+    <!-- Persistent Background Keep-Alive Audio (Prevents mobile OS from suspending browser audio) -->
+    <audio id="keepAliveAudio" loop playsinline></audio>
+    <!-- Incoming Voice Playback Element -->
+    <audio id="incomingVoiceAudio" playsinline></audio>
+
+    <script>
+        lucide.createIcons();
+
+        // ==========================================
+        // STATE & CONFIGURATION
+        // ==========================================
+        const MAX_SLOTS = 8; // Supports up to 8 simultaneous family devices per home code
+        let myDeviceName = '';
+        let homeCode = '';
+        let mySlot = 1;
+        let peer = null;
+        let connections = new Map(); // peerId -> { conn, deviceName }
+        let discoveryInterval = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        let isTalking = false;
+        let lastAudioBlobUrl = null;
+        let wakeLock = null;
+        let audioCtx = null;
+
+        // Restore saved device name & home code for convenience
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedName = localStorage.getItem('ht_device_name');
+            const savedCode = localStorage.getItem('ht_home_code');
+            if (savedName) document.getElementById('deviceNameInput').value = savedName;
+            if (savedCode) document.getElementById('homeCodeInput').value = savedCode;
+        });
+
+        // ==========================================
+        // WALKIE-TALKIE SOUND EFFECTS (WEB AUDIO API)
+        // ==========================================
+        function playRadioBeep(type = 'start') {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                const now = audioCtx.currentTime;
+                if (type === 'start') {
+                    // Classic dual-tone PTT chirp
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(880, now);
+                    osc.frequency.setValueAtTime(1180, now + 0.06);
+                    gain.gain.setValueAtTime(0.12, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+                    osc.start(now);
+                    osc.stop(now + 0.15);
+                } else {
+                    // Roger beep
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(1046, now);
+                    osc.frequency.setValueAtTime(784, now + 0.08);
+                    gain.gain.setValueAtTime(0.12, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+                    osc.start(now);
+                    osc.stop(now + 0.19);
+                }
+            } catch (e) {
+                console.warn('Beep skipped:', e);
+            }
+        }
+
+        // Unlock browser autoplay & keep background tab awake with ultra-quiet oscillator stream
+        function enableAlwaysOnAudio() {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+
+                // Create near-silent continuous stream so mobile browsers don't kill audio focus in background
+                const dest = audioCtx.createMediaStreamDestination();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                gain.gain.value = 0.0001; // Inaudible keep-alive pulse
+                osc.connect(gain);
+                gain.connect(dest);
+                osc.start();
+
+                const keepAliveEl = document.getElementById('keepAliveAudio');
+                keepAliveEl.srcObject = dest.stream;
+                keepAliveEl.play().catch(() => {});
+
+                // Setup MediaSession API so lock-screen shows HomeTalkie status
+                if ('mediaSession' in navigator) {
+                    navigator.mediaSession.metadata = new MediaMetadata({
+                        title: `HomeTalkie • ${homeCode}`,
+                        artist: 'Always-On Home Intercom',
+                        album: myDeviceName
+                    });
+                }
+            } catch (e) {
+                console.warn('Background keep-alive setup warning:', e);
+            }
+        }
+
+        async function requestScreenWakeLock() {
+            try {
+                if ('wakeLock' in navigator) {
+                    wakeLock = await navigator.wakeLock.request('screen');
+                }
+            } catch (e) {
+                // Wake lock optional if unsupported
+            }
+        }
+
+        // ==========================================
+        // JOIN HOME CHANNEL & MESH DISCOVERY
+        // ==========================================
+        document.getElementById('joinForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            myDeviceName = document.getElementById('deviceNameInput').value.trim();
+            homeCode = document.getElementById('homeCodeInput').value.trim().toLowerCase().replace(/[^a-z0-9-]/g, '');
+
+            if (!myDeviceName || !homeCode) return;
+
+            localStorage.setItem('ht_device_name', myDeviceName);
+            localStorage.setItem('ht_home_code', homeCode);
+
+            // Unlock audio playback on user tap
+            enableAlwaysOnAudio();
+            playRadioBeep('start');
+            requestScreenWakeLock();
+
+            // Pre-request mic permission so PTT is instant
+            try {
+                const testStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                testStream.getTracks().forEach(t => t.stop());
+            } catch (err) {
+                showBanner('Microphone permission needed to talk, but you can still listen!', 'warn');
+            }
+
+            document.getElementById('setupScreen').classList.add('hidden');
+            document.getElementById('intercomScreen').classList.remove('hidden');
+            document.getElementById('leaveBtn').classList.remove('hidden');
+            document.getElementById('headerRoomBadge').textContent = `#${homeCode}`;
+
+            renderDeviceList();
+            claimHomeSlot(1);
+        });
+
+        function claimHomeSlot(slot) {
+            if (slot > MAX_SLOTS) {
+                showBanner('Home channel is full (max 8 devices).', 'error');
+                return;
+            }
+            mySlot = slot;
+            const peerId = `hometalkie-v1-${homeCode}-slot-${slot}`;
+
+            if (peer) peer.destroy();
+
+            const candidate = new Peer(peerId, {
+                debug: 1,
+                config: {
+                    iceServers: [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ]
+                }
+            });
+
+            candidate.on('open', () => {
+                peer = candidate;
+                setupPeerEvents();
+                startMeshDiscovery();
+            });
+
+            candidate.on('error', (err) => {
+                if (err.type === 'unavailable-id') {
+                    candidate.destroy();
+                    claimHomeSlot(slot + 1);
+                }
+            });
+        }
+
+        function setupPeerEvents() {
+            peer.on('connection', (conn) => {
+                registerConnection(conn);
+            });
+        }
+
+        function startMeshDiscovery() {
+            clearInterval(discoveryInterval);
+            const scan = () => {
+                if (!peer || peer.disconnected) return;
+                for (let s = 1; s <= MAX_SLOTS; s++) {
+                    if (s === mySlot) continue;
+                    const targetId = `hometalkie-v1-${homeCode}-slot-${s}`;
+                    if (!connections.has(targetId)) {
+                        const conn = peer.connect(targetId, { reliable: true });
+                        registerConnection(conn);
+                    }
+                }
+            };
+            scan();
+            discoveryInterval = setInterval(scan, 4000);
+        }
+
+        function registerConnection(conn) {
+            conn.on('open', () => {
+                connections.set(conn.peer, { conn, deviceName: 'Family Device' });
+                conn.send({ type: 'HELLO', deviceName: myDeviceName });
+                renderDeviceList();
+            });
+
+            conn.on('data', (data) => {
+                if (!data) return;
+
+                if (data.type === 'HELLO') {
+                    connections.set(conn.peer, { conn, deviceName: data.deviceName || 'Device' });
+                    renderDeviceList();
+                } else if (data.type === 'VOICE_MSG') {
+                    handleIncomingVoice(data.sender, data.audioBuffer, data.mimeType);
+                }
+            });
+
+            conn.on('close', () => {
+                connections.delete(conn.peer);
+                renderDeviceList();
+            });
+
+            conn.on('error', () => {
+                connections.delete(conn.peer);
+                renderDeviceList();
+            });
+        }
+
+        function renderDeviceList() {
+            const listEl = document.getElementById('deviceList');
+            const countBadge = document.getElementById('peerCountBadge');
+            listEl.innerHTML = '';
+
+            // Add self
+            const selfChip = document.createElement('span');
+            selfChip.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-500/30 text-xs font-medium text-amber-300';
+            selfChip.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>${escapeHtml(myDeviceName)} (You)`;
+            listEl.appendChild(selfChip);
+
+            // Add connected peers
+            connections.forEach((info) => {
+                const chip = document.createElement('span');
+                chip.className = 'inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-xs font-medium text-emerald-300';
+                chip.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>${escapeHtml(info.deviceName)}`;
+                listEl.appendChild(chip);
+            });
+
+            const total = connections.size + 1;
+            countBadge.textContent = `${total} Online`;
+        }
+
+        // ==========================================
+        // PUSH-TO-TALK (HOLD TO RECORD & BROADCAST)
+        // ==========================================
+        async function startTalking(e) {
+            if (e) e.preventDefault();
+            if (isTalking) return;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+                });
+
+                isTalking = true;
+                audioChunks = [];
+                playRadioBeep('start');
+
+                // Visual Feedback
+                const btn = document.getElementById('pttBtn');
+                btn.classList.add('ptt-active', 'border-red-500');
+                document.getElementById('pttIcon').classList.replace('text-amber-400', 'text-red-500');
+                document.getElementById('pttText').textContent = 'Talking...';
+                setTransceiverState('bg-red-500 animate-ping', 'Broadcasting live to home...');
+
+                mediaRecorder = new MediaRecorder(stream);
+                mediaRecorder.ondataavailable = (ev) => {
+                    if (ev.data.size > 0) audioChunks.push(ev.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    stream.getTracks().forEach(t => t.stop());
+                    if (audioChunks.length === 0) return;
+
+                    const mimeType = mediaRecorder.mimeType || 'audio/webm';
+                    const audioBlob = new Blob(audioChunks, { type: mimeType });
+                    const arrayBuffer = await audioBlob.arrayBuffer();
+
+                    // Broadcast immediately to all connected devices in home
+                    let sentCount = 0;
+                    connections.forEach(({ conn }) => {
+                        if (conn && conn.open) {
+                            conn.send({
+                                type: 'VOICE_MSG',
+                                sender: myDeviceName,
+                                audioBuffer: arrayBuffer,
+                                mimeType: mimeType
+                            });
+                            sentCount++;
+                        }
+                    });
+
+                    playRadioBeep('end');
+                    if (sentCount === 0) {
+                        showBanner('No other devices connected in this Home Code yet.', 'warn');
+                    }
+                };
+
+                mediaRecorder.start();
+            } catch (err) {
+                showBanner('Could not access microphone. Check browser permissions.', 'error');
+            }
+        }
+
+        function stopTalking(e) {
+            if (e) e.preventDefault();
+            if (!isTalking) return;
+            isTalking = false;
+
+            const btn = document.getElementById('pttBtn');
+            btn.classList.remove('ptt-active', 'border-red-500');
+            document.getElementById('pttIcon').classList.replace('text-red-500', 'text-amber-400');
+            document.getElementById('pttText').textContent = 'Hold to Talk';
+            setTransceiverState('bg-emerald-500', 'Standby • Listening for voice');
+
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+        }
+
+        // Spacebar Push-To-Talk shortcut for PC/Laptop
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' && !e.repeat && !document.getElementById('intercomScreen').classList.contains('hidden')) {
+                e.preventDefault();
+                startTalking();
+            }
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space' && isTalking) {
+                e.preventDefault();
+                stopTalking();
+            }
+        });
+
+        // ==========================================
+        // INSTANT AUTO-PLAY ON RECEIVING DEVICE
+        // ==========================================
+        function handleIncomingVoice(senderName, arrayBuffer, mimeType) {
+            const blob = new Blob([arrayBuffer], { type: mimeType || 'audio/webm' });
+            if (lastAudioBlobUrl) URL.revokeObjectURL(lastAudioBlobUrl);
+            lastAudioBlobUrl = URL.createObjectURL(blob);
+
+            // Update UI & Replay button
+            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            document.getElementById('lastMsgSender').textContent = `From: ${senderName}`;
+            document.getElementById('lastMsgTime').textContent = `Received at ${timeStr}`;
+            document.getElementById('replayBtn').disabled = false;
+
+            // Play radio squelch beep then auto-play audio immediately
+            playRadioBeep('start');
+            setTransceiverState('bg-emerald-400 animate-ping', `Incoming from ${senderName}...`);
+            document.getElementById('receivingPulse').classList.remove('hidden');
+
+            const player = document.getElementById('incomingVoiceAudio');
+            player.src = lastAudioBlobUrl;
+            player.onended = () => {
+                playRadioBeep('end');
+                setTransceiverState('bg-emerald-500', 'Standby • Listening for voice');
+                document.getElementById('receivingPulse').classList.add('hidden');
+            };
+
+            setTimeout(() => {
+                player.play().catch((err) => {
+                    console.warn('Autoplay blocked until user taps page:', err);
+                    showBanner(`New message from ${senderName}! Tap Replay to listen.`, 'warn');
+                    setTransceiverState('bg-emerald-500', 'Standby • Listening for voice');
+                    document.getElementById('receivingPulse').classList.add('hidden');
+                });
+            }, 150);
+        }
+
+        function replayLastAudio() {
+            if (!lastAudioBlobUrl) return;
+            const player = document.getElementById('incomingVoiceAudio');
+            player.src = lastAudioBlobUrl;
+            player.play();
+        }
+
+        // ==========================================
+        // UI HELPERS
+        // ==========================================
+        function setTransceiverState(dotClasses, text) {
+            document.getElementById('statusDot').className = `w-2.5 h-2.5 rounded-full ${dotClasses}`;
+            document.getElementById('statusLabel').textContent = text;
+        }
+
+        function showBanner(msg, type = 'info') {
+            const banner = document.getElementById('statusBanner');
+            const text = document.getElementById('statusBannerText');
+            banner.className = 'mb-4 p-3 rounded-xl border text-xs flex items-center gap-2.5 ';
+            if (type === 'error') {
+                banner.className += 'bg-rose-950/60 border-rose-500/40 text-rose-200';
+            } else if (type === 'warn') {
+                banner.className += 'bg-amber-950/60 border-amber-500/40 text-amber-200';
+            } else {
+                banner.className += 'bg-zinc-900 border-zinc-700 text-zinc-200';
+            }
+            text.textContent = msg;
+            banner.classList.remove('hidden');
+            setTimeout(() => banner.classList.add('hidden'), 5000);
+        }
+
+        function leaveChannel() {
+            clearInterval(discoveryInterval);
+            connections.forEach(({ conn }) => conn.close());
+            connections.clear();
+            if (peer) peer.destroy();
+
+            document.getElementById('intercomScreen').classList.add('hidden');
+            document.getElementById('leaveBtn').classList.add('hidden');
+            document.getElementById('setupScreen').classList.remove('hidden');
+            document.getElementById('headerRoomBadge').textContent = 'Not Connected';
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>
